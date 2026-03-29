@@ -318,6 +318,199 @@ def test_detect_conflicts_no_start_times_returns_empty():
 
 
 # ---------------------------------------------------------------------------
+# Challenge 1: Weighted prioritization tests
+# ---------------------------------------------------------------------------
+
+def test_weighted_score_base_component():
+    """weighted_score() base = priority * 10 with no bonuses."""
+    task = Task("Walk", "walk", 20, priority=4)
+    # No due_date (not overdue), once, no preferred_time
+    assert task.weighted_score(current_hour=None) == pytest.approx(40.0)
+
+
+def test_weighted_score_overdue_bonus():
+    """weighted_score() adds 5 per day overdue."""
+    from datetime import date, timedelta
+    task = Task("Meds", "meds", 5, priority=3,
+                due_date=date.today() - timedelta(days=2))
+    score = task.weighted_score(current_hour=None)
+    # base=30 + overdue=10 (2 days * 5)
+    assert score == pytest.approx(40.0)
+
+
+def test_weighted_score_daily_recurrence_bonus():
+    """weighted_score() adds 8 for daily tasks."""
+    task = Task("Feed", "feed", 10, priority=2, frequency="daily")
+    score = task.weighted_score(current_hour=None)
+    # base=20 + recur=8
+    assert score == pytest.approx(28.0)
+
+
+def test_weighted_score_weekly_recurrence_bonus():
+    """weighted_score() adds 4 for weekly tasks."""
+    task = Task("Bath", "grooming", 30, priority=2, frequency="weekly")
+    score = task.weighted_score(current_hour=None)
+    # base=20 + recur=4
+    assert score == pytest.approx(24.0)
+
+
+def test_weighted_score_time_alignment_bonus():
+    """weighted_score() adds 6 when preferred_time matches current_hour."""
+    task = Task("Walk", "walk", 20, priority=3, preferred_time="morning")
+    # 08:00 is within "morning" (5–11)
+    score_aligned = task.weighted_score(current_hour=8)
+    score_not_aligned = task.weighted_score(current_hour=20)
+    assert score_aligned == pytest.approx(36.0)   # base=30 + align=6
+    assert score_not_aligned == pytest.approx(30.0)
+
+
+def test_weighted_score_priority_still_dominates():
+    """A priority-5 task should always outscore a priority-4 task at equal bonuses."""
+    high = Task("Meds",  "meds", 5, priority=5)
+    low  = Task("Play",  "enrichment", 10, priority=4, frequency="daily")
+    # low has recur +8, so score=48; high has base=50
+    assert high.weighted_score(current_hour=None) > low.weighted_score(current_hour=None)
+
+
+def test_generate_weighted_plan_respects_budget():
+    """generate_weighted_plan() must not exceed the time budget."""
+    owner = Owner(name="Jo", available_minutes=30)
+    pet = Pet(name="Rex", species="dog", age=2)
+    pet.add_task(Task("Long Walk", "walk", 25, priority=5))
+    pet.add_task(Task("Groom",    "grooming", 20, priority=3))
+    owner.add_pet(pet)
+    plan = Scheduler(owner=owner).generate_weighted_plan(current_hour=10)
+    assert sum(t.duration_minutes for t in plan) <= 30
+
+
+def test_generate_weighted_plan_skips_completed():
+    """generate_weighted_plan() should never include completed tasks."""
+    owner = Owner(name="Jo", available_minutes=60)
+    pet = Pet(name="Rex", species="dog", age=2)
+    done = Task("Done", "feed", 5, priority=5)
+    done.mark_complete()
+    pet.add_task(done)
+    pet.add_task(Task("Pending", "walk", 20, priority=3))
+    owner.add_pet(pet)
+    plan = Scheduler(owner=owner).generate_weighted_plan(current_hour=10)
+    assert done not in plan
+
+
+def test_generate_weighted_plan_overdue_overtakes_equal_priority():
+    """An overdue task should rank above a non-overdue task of equal priority."""
+    from datetime import date, timedelta
+    owner = Owner(name="Jo", available_minutes=120)
+    pet = Pet(name="Rex", species="dog", age=2)
+    overdue = Task("Old Meds", "meds", 5, priority=3,
+                   due_date=date.today() - timedelta(days=3))
+    fresh   = Task("New Task", "walk", 20, priority=3)
+    pet.add_task(fresh)
+    pet.add_task(overdue)
+    owner.add_pet(pet)
+    plan = Scheduler(owner=owner).generate_weighted_plan(current_hour=10)
+    # overdue task should appear first
+    assert plan[0].name == "Old Meds"
+
+
+def test_explain_weighted_plan_contains_score():
+    """explain_weighted_plan() output should contain 'score=' for each task."""
+    owner = Owner(name="Jo", available_minutes=60)
+    pet = Pet(name="Rex", species="dog", age=2)
+    pet.add_task(Task("Walk", "walk", 20, priority=4))
+    owner.add_pet(pet)
+    explanation = Scheduler(owner=owner).explain_weighted_plan(current_hour=9)
+    assert "score=" in explanation
+
+
+# ---------------------------------------------------------------------------
+# Challenge 2: JSON serialization tests
+# ---------------------------------------------------------------------------
+
+def test_task_to_dict_and_from_dict_roundtrip():
+    """Task.to_dict() -> Task.from_dict() should reproduce an identical task."""
+    from datetime import date
+    original = Task(
+        name="Walk", category="walk", duration_minutes=20, priority=4,
+        preferred_time="morning", start_time="07:00",
+        frequency="daily", due_date=date(2026, 4, 1), completed=True,
+    )
+    restored = Task.from_dict(original.to_dict())
+    assert restored.name == original.name
+    assert restored.category == original.category
+    assert restored.duration_minutes == original.duration_minutes
+    assert restored.priority == original.priority
+    assert restored.preferred_time == original.preferred_time
+    assert restored.start_time == original.start_time
+    assert restored.frequency == original.frequency
+    assert restored.due_date == original.due_date
+    assert restored.completed == original.completed
+
+
+def test_task_roundtrip_with_none_fields():
+    """Task.from_dict() should handle missing optional fields gracefully."""
+    minimal = Task(name="Feed", category="feed", duration_minutes=5, priority=3)
+    restored = Task.from_dict(minimal.to_dict())
+    assert restored.preferred_time is None
+    assert restored.start_time is None
+    assert restored.due_date is None
+    assert restored.completed is False
+
+
+def test_pet_to_dict_and_from_dict_roundtrip():
+    """Pet.to_dict() -> Pet.from_dict() should include all nested tasks."""
+    pet = Pet(name="Luna", species="dog", age=3, breed="Lab")
+    pet.add_task(Task("Walk", "walk", 30, 5))
+    pet.add_task(Task("Feed", "feed", 10, 5))
+    restored = Pet.from_dict(pet.to_dict())
+    assert restored.name == "Luna"
+    assert restored.breed == "Lab"
+    assert len(restored.get_tasks()) == 2
+    assert restored.get_tasks()[0].name == "Walk"
+
+
+def test_owner_to_dict_and_from_dict_roundtrip():
+    """Owner.to_dict() -> Owner.from_dict() should reconstruct full hierarchy."""
+    owner = Owner(name="Jordan", available_minutes=90, preferences=["no early walks"])
+    dog = Pet(name="Rex", species="dog", age=3)
+    dog.add_task(Task("Walk", "walk", 20, 5, frequency="daily"))
+    owner.add_pet(dog)
+
+    restored = Owner.from_dict(owner.to_dict())
+    assert restored.name == "Jordan"
+    assert restored.available_minutes == 90
+    assert restored.preferences == ["no early walks"]
+    assert len(restored.get_pets()) == 1
+    assert restored.get_pets()[0].name == "Rex"
+    assert len(restored.get_pets()[0].get_tasks()) == 1
+    assert restored.get_pets()[0].get_tasks()[0].frequency == "daily"
+
+
+def test_save_and_load_json_roundtrip(tmp_path):
+    """save_to_json() -> load_from_json() should reconstruct an identical Owner."""
+    path = tmp_path / "test_data.json"
+    owner = Owner(name="Sam", available_minutes=60)
+    cat = Pet(name="Mochi", species="cat", age=5)
+    cat.add_task(Task("Feed", "feed", 5, priority=5, frequency="daily"))
+    owner.add_pet(cat)
+
+    owner.save_to_json(path)
+    restored = Owner.load_from_json(path)
+
+    assert restored is not None
+    assert restored.name == "Sam"
+    assert restored.available_minutes == 60
+    assert len(restored.get_pets()) == 1
+    assert restored.get_pets()[0].name == "Mochi"
+    assert restored.get_pets()[0].get_tasks()[0].name == "Feed"
+
+
+def test_load_from_json_missing_file_returns_none(tmp_path):
+    """load_from_json() should return None when the file does not exist."""
+    result = Owner.load_from_json(tmp_path / "nonexistent.json")
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
 # Phase 4: Edge cases
 # ---------------------------------------------------------------------------
 

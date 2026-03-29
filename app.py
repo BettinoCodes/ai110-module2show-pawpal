@@ -1,3 +1,5 @@
+import re
+from datetime import datetime
 import streamlit as st
 from pawpal_system import Owner, Pet, Task, Scheduler
 
@@ -5,11 +7,21 @@ st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 st.title("🐾 PawPal+")
 st.caption("Your smart pet care planner — prioritized, conflict-aware, and recurring-task ready.")
 
+DATA_FILE = "data.json"
+
+
+def save(owner: Owner) -> None:
+    """Persist the current owner state to data.json."""
+    owner.save_to_json(DATA_FILE)
+
+
 # ---------------------------------------------------------------------------
-# Session state vault — Owner object persists across Streamlit reruns
+# Challenge 2 — Session state with persistence
+# Load from data.json on first run; fall back to a default owner if no file.
 # ---------------------------------------------------------------------------
 if "owner" not in st.session_state:
-    st.session_state.owner = Owner(name="Jordan", available_minutes=90)
+    loaded = Owner.load_from_json(DATA_FILE)
+    st.session_state.owner = loaded if loaded else Owner(name="Jordan", available_minutes=90)
 
 owner: Owner = st.session_state.owner
 
@@ -30,6 +42,7 @@ with st.form("owner_form"):
     if st.form_submit_button("Save"):
         owner.name = owner_name.strip() or owner.name
         owner.set_available_time(int(available))
+        save(owner)
         st.success(f"Saved — {owner.name}, {owner.available_minutes} min/day")
 
 # ---------------------------------------------------------------------------
@@ -64,6 +77,7 @@ with st.expander("Add a pet"):
                     age=int(age),
                     breed=breed.strip(),
                 ))
+                save(owner)
                 st.success(f"Added {pet_name.strip()}!")
                 st.rerun()
             else:
@@ -101,6 +115,7 @@ else:
                 btn_key = f"done_{pet.name}_{task.name}_{id(task)}"
                 if col_btn.button("Done", key=btn_key):
                     next_task = pet.complete_task(task.name)
+                    save(owner)
                     if next_task:
                         st.toast(
                             f"'{task.name}' done! Next {task.frequency} occurrence: {next_task.due_date}",
@@ -139,10 +154,8 @@ else:
 
             if st.form_submit_button("Add task"):
                 if task_name.strip():
-                    # Validate optional HH:MM
                     start_time: str | None = None
                     if start_time_raw.strip():
-                        import re
                         if re.match(r"^\d{2}:\d{2}$", start_time_raw.strip()):
                             start_time = start_time_raw.strip()
                         else:
@@ -161,6 +174,7 @@ else:
                         start_time=start_time,
                         frequency=frequency,
                     ))
+                    save(owner)
                     st.success(f"Added '{task_name.strip()}' for {target_pet.name}!")
                     st.rerun()
                 else:
@@ -178,12 +192,12 @@ if not all_tasks:
 else:
     scheduler = Scheduler(owner=owner)
 
-    # --- Conflict warnings (always visible when tasks exist) --------------
+    # --- Conflict warnings -------------------------------------------------
     conflicts = scheduler.detect_conflicts()
     if conflicts:
         st.warning(
-            "**Scheduling conflicts detected** — two or more tasks share the same start time. "
-            "Edit their start times to resolve before finalising your day."
+            "**Scheduling conflicts detected** — two or more tasks share the same "
+            "start time. Edit their start times to resolve before finalising your day."
         )
         for warning in conflicts:
             st.error(f"⚠️  {warning}")
@@ -229,9 +243,30 @@ else:
             })
         st.table(rows)
 
-    # --- Generate plan button ----------------------------------------------
+    # --- Plan mode selector ------------------------------------------------
+    st.markdown("**Plan mode:**")
+    plan_mode = st.radio(
+        "Choose scheduling algorithm:",
+        ["Standard (priority order)", "Weighted (urgency-aware)"],
+        horizontal=True,
+        help=(
+            "Standard: tasks ranked by priority number (1–5). "
+            "Weighted: composite score adds overdue urgency, recurrence bonus, "
+            "and time-of-day alignment on top of priority."
+        ),
+    )
+
     if st.button("Generate today's plan", type="primary"):
-        plan = scheduler.generate_plan()
+        current_hour = datetime.now().hour
+
+        if plan_mode.startswith("Weighted"):
+            plan = scheduler.generate_weighted_plan(current_hour=current_hour)
+            explanation = scheduler.explain_weighted_plan(current_hour=current_hour)
+            mode_label = "Weighted (urgency-aware)"
+        else:
+            plan = scheduler.generate_plan()
+            explanation = scheduler.explain_plan()
+            mode_label = "Standard (priority order)"
 
         if not plan:
             st.warning(
@@ -242,23 +277,25 @@ else:
             total_min = sum(t.duration_minutes for t in plan)
             remaining = owner.available_minutes - total_min
             st.success(
-                f"**{len(plan)} tasks scheduled** — "
+                f"**{len(plan)} tasks scheduled** ({mode_label}) — "
                 f"{total_min} min used, {remaining} min remaining out of {owner.available_minutes} min"
             )
             plan_rows = []
             for t in plan:
+                score_note = f"{t.weighted_score(current_hour):.0f}" if plan_mode.startswith("Weighted") else "—"
                 plan_rows.append({
                     "Task": t.name,
                     "Category": t.category,
                     "Duration": f"{t.duration_minutes} min",
                     "Priority": t.priority,
+                    "Score": score_note,
                     "Time": t.start_time or t.preferred_time or "—",
                     "Recurrence": t.frequency,
                 })
             st.table(plan_rows)
 
         with st.expander("Scheduling explanation"):
-            st.code(scheduler.explain_plan(), language=None)
+            st.code(explanation, language=None)
 
     # --- Filter panel ------------------------------------------------------
     with st.expander("Filter tasks"):
@@ -287,3 +324,16 @@ else:
             st.table(filter_rows)
         else:
             st.info("No tasks match this filter.")
+
+# ---------------------------------------------------------------------------
+# Sidebar — data management
+# ---------------------------------------------------------------------------
+with st.sidebar:
+    st.header("Data")
+    st.caption(f"Auto-saved to `{DATA_FILE}` after every change.")
+    if st.button("Reset all data"):
+        import os
+        if os.path.exists(DATA_FILE):
+            os.remove(DATA_FILE)
+        del st.session_state["owner"]
+        st.rerun()

@@ -34,7 +34,9 @@ Your final app should:
 | **Recurring tasks** | Tasks carry a `frequency` field (`once` / `daily` / `weekly`); marking one complete automatically spawns the next occurrence with a `due_date` calculated via Python's `timedelta` |
 | **Conflict detection** | `Scheduler.detect_conflicts()` flags any two tasks that share the same start time and surfaces a warning banner in the UI — no exceptions, no crashes |
 | **Interactive UI** | Streamlit interface with conflict banners (`st.warning`/`st.error`), sortable task table, Done buttons with recurrence toast notifications, and a filter panel |
-| **Automated tests** | 40 pytest tests covering happy paths and edge cases (empty states, zero budget, combined filters, multiple conflict slots) |
+| **Weighted prioritization** | `Scheduler.generate_weighted_plan()` ranks tasks by a composite score: base priority + overdue urgency + recurrence bonus + time-of-day alignment; UI toggle compares Standard vs. Weighted plans side-by-side |
+| **Data persistence** | `Owner.save_to_json()` / `load_from_json()` auto-saves to `data.json` after every change using a custom `to_dict`/`from_dict` contract on all classes; no extra dependencies |
+| **Automated tests** | 56 pytest tests covering happy paths and edge cases (empty states, zero budget, combined filters, weighted score components, full JSON round-trip) |
 
 ## Getting started
 
@@ -57,6 +59,37 @@ streamlit run app.py
 ```bash
 python -m pytest
 ```
+
+## Challenge 1 — Weighted Prioritization
+
+`Scheduler.generate_weighted_plan()` is a third algorithmic capability that goes beyond the basic priority sort. It computes a **composite urgency score** for each task using four additive components:
+
+| Component | Weight | Rationale |
+|---|---|---|
+| Base priority | `priority × 10` (0–50) | Dominates; ensures a P5 task always beats a P4 task at equal bonuses |
+| Overdue urgency | `days_overdue × 5` | Catches up recurring meds that have been skipped; prevents them from being perpetually bumped |
+| Recurrence bonus | `+8` daily / `+4` weekly | Recurring commitments are weighted slightly higher than one-off errands at the same priority |
+| Time-of-day alignment | `+6` if `preferred_time` matches current hour | Soft preference: rewards scheduling a "morning" task in the morning without preventing it from being chosen later |
+
+The UI exposes a **Standard vs. Weighted** radio toggle on the Generate Plan button. In Weighted mode the plan table shows each task's composite score; the explanation log breaks down every component.
+
+**How Agent Mode was used:**
+Agent Mode was prompted with the full `pawpal_system.py` and asked: *"Suggest a composite scoring algorithm for pet care tasks that combines priority, overdue days, recurrence frequency, and time-of-day preference — and explain how to weight the components so priority still dominates."*  The AI proposed equal weights for all components, which would have allowed a severely overdue low-priority enrichment task to jump ahead of urgent medication. The weights were redesigned so `priority × 10` always produces a higher gap between priority levels (10 points) than any single bonus can bridge — only a task that is simultaneously overdue, recurring, and time-aligned can overtake a task one priority level above it.
+
+## Challenge 2 — Data Persistence
+
+PawPal+ now remembers everything between runs using a `data.json` file.
+
+**How it works:**
+
+Each class implements a `to_dict()` / `from_dict()` pair rather than relying on a third-party serialization library like `marshmallow`. This approach keeps the project dependency-free and makes the serialization logic explicit and testable. `date` objects are converted to ISO-8601 strings (`YYYY-MM-DD`) for JSON compatibility and parsed back with `date.fromisoformat()`.
+
+```
+Owner.save_to_json("data.json")   # writes full hierarchy
+Owner.load_from_json("data.json") # returns None if file missing (safe first-run)
+```
+
+`app.py` calls `Owner.load_from_json()` at startup (inside the `if "owner" not in st.session_state` guard so it only runs once per browser session), and calls `save(owner)` after every mutation — adding a pet, adding a task, marking a task done, and updating owner info. A **Reset all data** button in the sidebar deletes `data.json` and clears the session.
 
 ## Smarter Scheduling
 
