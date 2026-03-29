@@ -22,6 +22,20 @@ Your final app should:
 - Display the plan clearly (and ideally explain the reasoning)
 - Include tests for the most important scheduling behaviors
 
+## Features
+
+| Feature | Description |
+|---|---|
+| **Owner & pet profiles** | Enter your name, daily time budget, and details for one or more pets (species, age, breed) |
+| **Task management** | Add care tasks (walk, feed, meds, grooming, enrichment…) with duration, priority (1–5), preferred time, and an optional precise start time |
+| **Priority scheduling** | `Scheduler.generate_plan()` selects incomplete tasks in priority order, stopping when the time budget is exhausted; every inclusion and skip is explained in plain language |
+| **Chronological view** | `Scheduler.sort_by_time()` sorts all tasks by `start_time` (HH:MM ascending); tasks without a start time appear last |
+| **Flexible filtering** | `Scheduler.filter_tasks()` narrows the task list by pet name, completion status, or both simultaneously |
+| **Recurring tasks** | Tasks carry a `frequency` field (`once` / `daily` / `weekly`); marking one complete automatically spawns the next occurrence with a `due_date` calculated via Python's `timedelta` |
+| **Conflict detection** | `Scheduler.detect_conflicts()` flags any two tasks that share the same start time and surfaces a warning banner in the UI — no exceptions, no crashes |
+| **Interactive UI** | Streamlit interface with conflict banners (`st.warning`/`st.error`), sortable task table, Done buttons with recurrence toast notifications, and a filter panel |
+| **Automated tests** | 40 pytest tests covering happy paths and edge cases (empty states, zero budget, combined filters, multiple conflict slots) |
+
 ## Getting started
 
 ### Setup
@@ -30,6 +44,18 @@ Your final app should:
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+```
+
+### Run the app
+
+```bash
+streamlit run app.py
+```
+
+### Run the tests
+
+```bash
+python -m pytest
 ```
 
 ## Smarter Scheduling
