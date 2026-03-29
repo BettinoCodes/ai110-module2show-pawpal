@@ -163,3 +163,155 @@ def test_filter_by_priority_orders_correctly():
     ordered = scheduler.filter_by_priority()
     priorities = [t.priority for t in ordered]
     assert priorities == sorted(priorities, reverse=True)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Sorting tests
+# ---------------------------------------------------------------------------
+
+def test_sort_by_time_ascending():
+    """sort_by_time() should return tasks in HH:MM ascending order."""
+    owner = Owner(name="Jo", available_minutes=120)
+    pet = Pet(name="Boo", species="dog", age=2)
+    pet.add_task(Task("Evening", "walk",  20, 3, start_time="18:00"))
+    pet.add_task(Task("Morning", "walk",  20, 5, start_time="07:00"))
+    pet.add_task(Task("Midday",  "feed",  10, 4, start_time="12:00"))
+    owner.add_pet(pet)
+    times = [t.start_time for t in Scheduler(owner=owner).sort_by_time()]
+    assert times == ["07:00", "12:00", "18:00"]
+
+
+def test_sort_by_time_no_start_time_goes_last():
+    """Tasks without start_time should appear after all timed tasks."""
+    owner = Owner(name="Jo", available_minutes=120)
+    pet = Pet(name="Boo", species="dog", age=2)
+    pet.add_task(Task("No Time",  "grooming", 10, 2))
+    pet.add_task(Task("Morning",  "walk",     20, 5, start_time="07:00"))
+    owner.add_pet(pet)
+    sorted_tasks = Scheduler(owner=owner).sort_by_time()
+    assert sorted_tasks[0].name == "Morning"
+    assert sorted_tasks[-1].name == "No Time"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Filtering tests
+# ---------------------------------------------------------------------------
+
+def test_filter_tasks_by_pet_name():
+    """filter_tasks(pet_name=...) should return only that pet's tasks."""
+    owner = Owner(name="Jo", available_minutes=120)
+    dog = Pet(name="Rex", species="dog", age=3)
+    cat = Pet(name="Luna", species="cat", age=2)
+    dog.add_task(Task("Walk", "walk", 20, 5))
+    cat.add_task(Task("Feed", "feed", 10, 5))
+    owner.add_pet(dog)
+    owner.add_pet(cat)
+    results = Scheduler(owner=owner).filter_tasks(pet_name="Rex")
+    assert len(results) == 1
+    assert results[0].name == "Walk"
+
+
+def test_filter_tasks_by_completed_false():
+    """filter_tasks(completed=False) should exclude finished tasks."""
+    owner = Owner(name="Jo", available_minutes=120)
+    pet = Pet(name="Rex", species="dog", age=3)
+    done = Task("Done Task", "feed", 10, 5)
+    done.mark_complete()
+    pending = Task("Pending", "walk", 20, 4)
+    pet.add_task(done)
+    pet.add_task(pending)
+    owner.add_pet(pet)
+    results = Scheduler(owner=owner).filter_tasks(completed=False)
+    assert all(not t.completed for t in results)
+    assert any(t.name == "Pending" for t in results)
+
+
+def test_filter_tasks_by_completed_true():
+    """filter_tasks(completed=True) should return only completed tasks."""
+    owner = Owner(name="Jo", available_minutes=120)
+    pet = Pet(name="Rex", species="dog", age=3)
+    done = Task("Done Task", "feed", 10, 5)
+    done.mark_complete()
+    pet.add_task(done)
+    pet.add_task(Task("Pending", "walk", 20, 4))
+    owner.add_pet(pet)
+    results = Scheduler(owner=owner).filter_tasks(completed=True)
+    assert len(results) == 1
+    assert results[0].name == "Done Task"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Recurring task tests
+# ---------------------------------------------------------------------------
+
+def test_complete_task_daily_spawns_next_occurrence():
+    """Completing a daily task should add a new occurrence to the pet."""
+    from datetime import date, timedelta
+    pet = Pet(name="Rex", species="dog", age=3)
+    pet.add_task(Task("Walk", "walk", 20, 5, frequency="daily",
+                      due_date=date.today()))
+    before = len(pet.get_tasks())
+    next_task = pet.complete_task("Walk")
+    assert len(pet.get_tasks()) == before + 1
+    assert next_task is not None
+    assert next_task.due_date == date.today() + timedelta(days=1)
+    assert next_task.completed is False
+
+
+def test_complete_task_weekly_spawns_seven_days_later():
+    """Completing a weekly task should schedule the next occurrence 7 days out."""
+    from datetime import date, timedelta
+    pet = Pet(name="Rex", species="dog", age=3)
+    pet.add_task(Task("Bath", "grooming", 30, 3, frequency="weekly",
+                      due_date=date.today()))
+    next_task = pet.complete_task("Bath")
+    assert next_task is not None
+    assert next_task.due_date == date.today() + timedelta(weeks=1)
+
+
+def test_complete_task_once_does_not_spawn():
+    """Completing a one-time task should not add a new occurrence."""
+    pet = Pet(name="Rex", species="dog", age=3)
+    pet.add_task(Task("Vet Visit", "meds", 60, 5, frequency="once"))
+    before = len(pet.get_tasks())
+    result = pet.complete_task("Vet Visit")
+    assert result is None
+    assert len(pet.get_tasks()) == before
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Conflict detection tests
+# ---------------------------------------------------------------------------
+
+def test_detect_conflicts_finds_same_start_time():
+    """detect_conflicts() should flag tasks sharing the same start_time."""
+    owner = Owner(name="Jo", available_minutes=120)
+    dog = Pet(name="Rex", species="dog", age=3)
+    cat = Pet(name="Luna", species="cat", age=2)
+    dog.add_task(Task("Walk",  "walk", 20, 5, start_time="08:00"))
+    cat.add_task(Task("Feed",  "feed", 10, 5, start_time="08:00"))
+    owner.add_pet(dog)
+    owner.add_pet(cat)
+    warnings = Scheduler(owner=owner).detect_conflicts()
+    assert len(warnings) == 1
+    assert "08:00" in warnings[0]
+
+
+def test_detect_conflicts_no_overlap_returns_empty():
+    """detect_conflicts() should return an empty list when no times clash."""
+    owner = Owner(name="Jo", available_minutes=120)
+    pet = Pet(name="Rex", species="dog", age=3)
+    pet.add_task(Task("Morning", "walk", 20, 5, start_time="07:00"))
+    pet.add_task(Task("Evening", "walk", 20, 3, start_time="18:00"))
+    owner.add_pet(pet)
+    assert Scheduler(owner=owner).detect_conflicts() == []
+
+
+def test_detect_conflicts_no_start_times_returns_empty():
+    """Tasks with no start_time should never produce a conflict warning."""
+    owner = Owner(name="Jo", available_minutes=120)
+    pet = Pet(name="Rex", species="dog", age=3)
+    pet.add_task(Task("Walk", "walk",  20, 5))
+    pet.add_task(Task("Feed", "feed",  10, 5))
+    owner.add_pet(pet)
+    assert Scheduler(owner=owner).detect_conflicts() == []

@@ -67,8 +67,7 @@ The design uses four classes. `Owner` holds the person's name and the time windo
 
 **b. Design changes**
 
-- Did your design change during implementation?
-- If yes, describe at least one change and why you made it.
+One significant change: the original skeleton gave `Scheduler` both an `owner` and a `pet` field, implying it would schedule for one pet at a time. During implementation it became clear that an owner with two pets needs a single unified schedule (otherwise the time budget is applied separately per pet and could be double-counted). `Scheduler` was simplified to hold only `owner`, and it aggregates all tasks from all pets via `owner.get_all_tasks()`. This is both cleaner and more realistic — a busy owner wants one consolidated daily plan, not two separate ones.
 
 ---
 
@@ -76,13 +75,14 @@ The design uses four classes. `Owner` holds the person's name and the time windo
 
 **a. Constraints and priorities**
 
-- What constraints does your scheduler consider (for example: time, priority, preferences)?
-- How did you decide which constraints mattered most?
+The scheduler considers two hard constraints: available time (tasks that don't fit are skipped entirely) and completion status (already-done tasks are never re-added). Within those constraints, it ranks by priority (1–5). Time of day (`preferred_time`, `start_time`) is used for display and conflict detection but does not gate task selection — a high-priority evening walk will still be scheduled even if the plan is generated in the morning. Priority was made the primary ranking signal because it directly encodes the owner's judgment about what matters most.
 
 **b. Tradeoffs**
 
-- Describe one tradeoff your scheduler makes.
-- Why is that tradeoff reasonable for this scenario?
+**Exact-match conflict detection vs. overlap detection.**
+The `detect_conflicts()` method flags any two tasks that share the same `start_time` string (e.g., both set to `"07:30"`). It does *not* check whether a 30-minute task starting at `07:00` overlaps with a 20-minute task starting at `07:15`.
+
+This is a deliberate simplification. True overlap detection requires computing each task's end time (`start + duration`) and checking interval intersections — O(n²) comparisons with more edge cases. For a daily pet-care planner used by a single owner with a handful of tasks, exact-match checking catches the most common mistake (scheduling two things at the same moment) while keeping the code easy to read and test. A future iteration could upgrade to interval-overlap detection if the app grows to support shared calendars or automated reminders.
 
 ---
 
