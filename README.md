@@ -43,6 +43,32 @@ Phase 3 added four algorithmic features to `pawpal_system.py`:
 | **Recurring tasks** | `Task.next_occurrence()` / `Pet.complete_task()` | Tasks carry a `frequency` field (`"once"`, `"daily"`, `"weekly"`); calling `pet.complete_task(name)` marks the task done and, if recurring, appends a fresh copy with the next `due_date` computed via `timedelta` |
 | **Conflict detection** | `Scheduler.detect_conflicts()` | Buckets tasks by `start_time`; any bucket with more than one entry produces a human-readable warning string — no exceptions raised |
 
+## Testing PawPal+
+
+### Run the tests
+
+```bash
+python -m pytest
+```
+
+All tests live in `tests/test_pawpal.py`. The suite currently contains **40 tests** covering:
+
+| Category | What is verified |
+|---|---|
+| **Task basics** | `mark_complete()` flips status; idempotent; `is_schedulable()` boundary conditions including zero remaining minutes |
+| **Pet management** | `add_task` / `remove_task` / `get_tasks` copy-safety; pet with no tasks returns empty list |
+| **Owner aggregation** | `get_all_tasks()` collects across multiple pets; owner with no pets returns empty |
+| **Scheduler — plan generation** | Respects time budget; skips completed tasks; zero-budget returns empty; all-completed returns empty |
+| **Scheduler — sorting** | `sort_by_time()` returns HH:MM ascending; tasks without `start_time` sort last |
+| **Scheduler — filtering** | `filter_tasks()` by pet name, by completion status, and both combined |
+| **Scheduler — conflict detection** | Exact `start_time` matches flagged; distinct non-overlapping times clean; multiple conflict slots reported separately; no `start_time` → never a conflict |
+| **Recurring tasks** | Daily task spawns next occurrence +1 day; weekly +7 days; `once` tasks do not spawn; unknown task name returns `None` gracefully; `next_occurrence()` preserves all fields and uses today when `due_date` is `None` |
+| **explain_plan output** | Contains owner name; mentions skipped tasks with "SKIP" label |
+
+### Confidence level: ★★★★☆ (4/5)
+
+The core scheduling contract (priority ordering, time budget, completed-task skipping) and all algorithmic additions (sorting, filtering, recurrence, conflict detection) are thoroughly covered. The main gap is integration-level testing of the Streamlit UI — clicking buttons in `app.py` is not tested automatically — and true duration-overlap detection is not implemented (only exact `start_time` equality is checked). Those are the areas to tackle next.
+
 ### Suggested workflow
 
 1. Read the scenario carefully and identify requirements and edge cases.

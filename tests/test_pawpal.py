@@ -315,3 +315,159 @@ def test_detect_conflicts_no_start_times_returns_empty():
     pet.add_task(Task("Feed", "feed",  10, 5))
     owner.add_pet(pet)
     assert Scheduler(owner=owner).detect_conflicts() == []
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Edge cases
+# ---------------------------------------------------------------------------
+
+# --- Empty states -----------------------------------------------------------
+
+def test_owner_with_no_pets_generates_empty_plan():
+    """An owner with no pets should produce an empty schedule."""
+    owner = Owner(name="Empty", available_minutes=60)
+    assert Scheduler(owner=owner).generate_plan() == []
+
+
+def test_owner_with_no_pets_has_no_tasks():
+    """get_all_tasks() with no pets should return an empty list."""
+    owner = Owner(name="Empty", available_minutes=60)
+    assert owner.get_all_tasks() == []
+
+
+def test_pet_with_no_tasks_returns_empty_list():
+    """A freshly created pet should have zero tasks."""
+    pet = Pet(name="Solo", species="cat", age=1)
+    assert pet.get_tasks() == []
+
+
+def test_scheduler_with_pet_but_no_tasks_generates_empty_plan():
+    """A pet registered but with no tasks should yield an empty plan."""
+    owner = Owner(name="Jo", available_minutes=60)
+    owner.add_pet(Pet(name="Blank", species="rabbit", age=2))
+    assert Scheduler(owner=owner).generate_plan() == []
+
+
+# --- Zero / exhausted budget ------------------------------------------------
+
+def test_is_schedulable_zero_remaining_returns_false(sample_task):
+    """is_schedulable(0) should be False for any task with duration > 0."""
+    assert sample_task.is_schedulable(0) is False
+
+
+def test_generate_plan_zero_budget_returns_empty():
+    """A budget of 0 minutes means no tasks can be scheduled."""
+    owner = Owner(name="Busy", available_minutes=0)
+    pet = Pet(name="Rex", species="dog", age=2)
+    pet.add_task(Task("Walk", "walk", 1, 5))   # even 1-min task won't fit
+    owner.add_pet(pet)
+    assert Scheduler(owner=owner).generate_plan() == []
+
+
+def test_generate_plan_all_completed_returns_empty():
+    """If every task is already completed, the plan should be empty."""
+    owner = Owner(name="Done", available_minutes=120)
+    pet = Pet(name="Rex", species="dog", age=2)
+    for name in ("Walk", "Feed", "Meds"):
+        t = Task(name, "walk", 10, 5)
+        t.mark_complete()
+        pet.add_task(t)
+    owner.add_pet(pet)
+    assert Scheduler(owner=owner).generate_plan() == []
+
+
+# --- Combined filter --------------------------------------------------------
+
+def test_filter_tasks_combined_pet_and_completed():
+    """filter_tasks(pet_name, completed=False) should narrow by both axes."""
+    owner = Owner(name="Jo", available_minutes=120)
+    dog = Pet(name="Rex", species="dog", age=3)
+    cat = Pet(name="Luna", species="cat", age=2)
+    done = Task("Rex Done", "feed", 10, 5)
+    done.mark_complete()
+    dog.add_task(done)
+    dog.add_task(Task("Rex Pending", "walk", 20, 4))
+    cat.add_task(Task("Luna Pending", "walk", 20, 4))
+    owner.add_pet(dog)
+    owner.add_pet(cat)
+    results = Scheduler(owner=owner).filter_tasks(pet_name="Rex", completed=False)
+    assert len(results) == 1
+    assert results[0].name == "Rex Pending"
+
+
+# --- Recurring edge cases ---------------------------------------------------
+
+def test_complete_task_unknown_name_returns_none():
+    """complete_task() with a non-existent name should return None gracefully."""
+    pet = Pet(name="Rex", species="dog", age=3)
+    pet.add_task(Task("Walk", "walk", 20, 5, frequency="daily"))
+    result = pet.complete_task("NonExistent")
+    assert result is None
+
+
+def test_next_occurrence_no_due_date_uses_today():
+    """next_occurrence() with no due_date set should base the offset on today."""
+    from datetime import date, timedelta
+    task = Task("Walk", "walk", 20, 5, frequency="daily")  # due_date=None
+    next_task = task.next_occurrence()
+    assert next_task.due_date == date.today() + timedelta(days=1)
+
+
+def test_next_occurrence_preserves_task_attributes():
+    """next_occurrence() should copy all fields except due_date and completed."""
+    from datetime import date
+    task = Task("Feed", "feed", 10, 4, preferred_time="morning",
+                start_time="07:30", frequency="daily", due_date=date.today())
+    nxt = task.next_occurrence()
+    assert nxt.name == task.name
+    assert nxt.category == task.category
+    assert nxt.duration_minutes == task.duration_minutes
+    assert nxt.priority == task.priority
+    assert nxt.preferred_time == task.preferred_time
+    assert nxt.start_time == task.start_time
+    assert nxt.frequency == task.frequency
+    assert nxt.completed is False
+
+
+# --- Multiple conflicts ------------------------------------------------------
+
+def test_detect_conflicts_multiple_slots():
+    """detect_conflicts() should report a warning for each conflicting time slot."""
+    owner = Owner(name="Jo", available_minutes=120)
+    dog = Pet(name="Rex", species="dog", age=3)
+    cat = Pet(name="Luna", species="cat", age=2)
+    # Two conflicts: 07:00 and 18:00
+    dog.add_task(Task("Morning Walk", "walk", 20, 5, start_time="07:00"))
+    cat.add_task(Task("Morning Feed", "feed", 10, 5, start_time="07:00"))
+    dog.add_task(Task("Evening Walk", "walk", 20, 3, start_time="18:00"))
+    cat.add_task(Task("Evening Play", "enrichment", 15, 2, start_time="18:00"))
+    owner.add_pet(dog)
+    owner.add_pet(cat)
+    warnings = Scheduler(owner=owner).detect_conflicts()
+    assert len(warnings) == 2
+    assert any("07:00" in w for w in warnings)
+    assert any("18:00" in w for w in warnings)
+
+
+# --- explain_plan sanity check ----------------------------------------------
+
+def test_explain_plan_contains_owner_name():
+    """explain_plan() output should reference the owner's name."""
+    owner = Owner(name="Jordan", available_minutes=30)
+    pet = Pet(name="Rex", species="dog", age=2)
+    pet.add_task(Task("Walk", "walk", 20, 5))
+    owner.add_pet(pet)
+    explanation = Scheduler(owner=owner).explain_plan()
+    assert "Jordan" in explanation
+
+
+def test_explain_plan_mentions_skipped_task():
+    """explain_plan() should mention tasks that are skipped due to budget."""
+    owner = Owner(name="Jo", available_minutes=10)
+    pet = Pet(name="Rex", species="dog", age=2)
+    pet.add_task(Task("Short",  "feed", 5,  priority=5))
+    pet.add_task(Task("TooLong", "walk", 20, priority=3))
+    owner.add_pet(pet)
+    explanation = Scheduler(owner=owner).explain_plan()
+    assert "TooLong" in explanation
+    assert "SKIP" in explanation
