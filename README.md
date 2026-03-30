@@ -137,3 +137,11 @@ The core scheduling contract (priority ordering, time budget, completed-task ski
 5. Add tests to verify key behaviors.
 6. Connect your logic to the Streamlit UI in `app.py`.
 7. Refine UML so it matches what you actually built.
+
+### Demo
+<img width="1078" height="631" alt="image" src="https://github.com/user-attachments/assets/504cc564-0226-4c1a-bcd8-43d70fb042f7" />
+<img width="1050" height="733" alt="image" src="https://github.com/user-attachments/assets/e532e4fb-33c1-4b6b-a634-c1032750fd7b" />
+<img width="1037" height="771" alt="image" src="https://github.com/user-attachments/assets/7b58eef2-7349-489e-afa0-f9e4e704b508" />
+
+
+
