@@ -75,11 +75,13 @@ classDiagram
 
 **a. Initial design**
 
-The design uses four classes. `Owner` holds the person's name and the time window they have each day (in minutes) along with any personal preferences. `Pet` belongs to an owner and collects the list of care tasks associated with that animal. `Task` is the central data object — it stores what the task is (category), how long it takes, and how urgent it is (priority 1–5). `Scheduler` is the "brain": it takes an owner and their pet's tasks, respects the available-time constraint, sorts by priority, and produces an ordered daily plan with a plain-language explanation.
+The design uses four classes. `Owner` holds the person's name and the amount of time they have each day in minutes along with any preferences. `Pet` belongs to an owner and keeps track of the list of care tasks for that animal. `Task` is the main data object because it stores the category of the task, how long it takes, and its priority from 1 to 5. `Scheduler` is the main controller. It takes an owner and all their tasks, applies the time limit, sorts by priority, and creates an ordered daily plan with a simple explanation.
 
 **b. Design changes**
 
-One significant change: the original skeleton gave `Scheduler` both an `owner` and a `pet` field, implying it would schedule for one pet at a time. During implementation it became clear that an owner with two pets needs a single unified schedule (otherwise the time budget is applied separately per pet and could be double-counted). `Scheduler` was simplified to hold only `owner`, and it aggregates all tasks from all pets via `owner.get_all_tasks()`. This is both cleaner and more realistic — a busy owner wants one consolidated daily plan, not two separate ones.
+One important change came up during implementation. The original design had `Scheduler` storing both an `owner` and a `pet`, which meant it would create schedules for one pet at a time. This did not work well because an owner with multiple pets needs one combined schedule. Otherwise, the time limit would be applied separately for each pet and could be counted twice.
+
+To fix this, `Scheduler` was simplified to only store the `owner`. It now collects all tasks from every pet using `owner.get_all_tasks()`. This makes the design cleaner and more realistic since a user would want one daily plan instead of multiple separate ones.
 
 ---
 
@@ -87,14 +89,17 @@ One significant change: the original skeleton gave `Scheduler` both an `owner` a
 
 **a. Constraints and priorities**
 
-The scheduler considers two hard constraints: available time (tasks that don't fit are skipped entirely) and completion status (already-done tasks are never re-added). Within those constraints, it ranks by priority (1–5). Time of day (`preferred_time`, `start_time`) is used for display and conflict detection but does not gate task selection — a high-priority evening walk will still be scheduled even if the plan is generated in the morning. Priority was made the primary ranking signal because it directly encodes the owner's judgment about what matters most.
+The scheduler focuses on two main constraints. The first is available time, so tasks that do not fit within the daily time limit are skipped. The second is completion status, meaning tasks that are already finished are not included again.
+
+Within these limits, tasks are sorted by priority from 1 to 5. Time-related fields like `preferred_time` or `start_time` are mainly used for display and checking conflicts, not for deciding which tasks get scheduled. This means a high-priority task will still be included even if its preferred time does not match. Priority is the main factor because it reflects what the owner thinks is most important.
 
 **b. Tradeoffs**
 
 **Exact-match conflict detection vs. overlap detection.**
-The `detect_conflicts()` method flags any two tasks that share the same `start_time` string (e.g., both set to `"07:30"`). It does *not* check whether a 30-minute task starting at `07:00` overlaps with a 20-minute task starting at `07:15`.
 
-This is a deliberate simplification. True overlap detection requires computing each task's end time (`start + duration`) and checking interval intersections — O(n²) comparisons with more edge cases. For a daily pet-care planner used by a single owner with a handful of tasks, exact-match checking catches the most common mistake (scheduling two things at the same moment) while keeping the code easy to read and test. A future iteration could upgrade to interval-overlap detection if the app grows to support shared calendars or automated reminders.
+The `detect_conflicts()` method checks if two tasks have the exact same `start_time`. It does not check whether their time ranges overlap.
+
+This was a deliberate simplification. Detecting overlaps would require calculating end times and comparing time intervals, which adds more complexity and edge cases. For a simple daily planner with only a few tasks, checking exact matches catches the most common mistake while keeping the code easy to understand and test. In the future, this could be improved to handle full overlap detection if needed.
 
 ---
 
@@ -102,13 +107,21 @@ This is a deliberate simplification. True overlap detection requires computing e
 
 **a. How you used AI**
 
-AI was used at every phase, but in different roles. In Phase 1 it was a design partner — I described the four classes and asked it to produce the Mermaid UML skeleton, which saved time on boilerplate and helped surface missing relationships (like the fact that `Scheduler` should own the `Owner`, not a single `Pet`). In Phase 2 it acted as a code generator for method stubs; I provided the contract ("return tasks sorted highest priority first") and it produced the one-liner lambda sort. In Phase 3 I used it to brainstorm which edge cases mattered for a scheduling system and it suggested the `"99:99"` sentinel trick for sorting timeless tasks to the end. In Phase 4 it helped draft test names and structure, which I then verified manually by running pytest.
+AI was used throughout the project, but in different ways. In the beginning, it helped with design by generating a UML diagram based on the four classes. This saved time and helped identify missing relationships.
 
-The most effective prompts were *constrained* ones: "Given these exact inputs, what should this function return, and why?" vague prompts like "make this better" produced noisy suggestions that needed heavy editing. Specific prompts with example data produced code I could validate immediately.
+During implementation, it was used to generate method stubs and simple logic, such as sorting tasks by priority. Later, it helped suggest edge cases to consider, like how to handle tasks without a set time. It also suggested using a placeholder value so those tasks could be sorted to the end.
+
+For testing, AI helped generate ideas for test cases and structure, but everything was still verified manually by running pytest.
+
+The most helpful prompts were specific ones. When I gave clear inputs and expected outputs, the responses were much more useful. General prompts usually required more editing.
 
 **b. Judgment and verification**
 
-When generating the conflict-detection method, AI initially suggested raising a `ValueError` when a conflict was found. I rejected this because the project specification says the app should *warn* the user, not crash. A pet owner who accidentally schedules two tasks at the same time should see a clear `st.warning()` message and be able to fix it — not receive a Python traceback. I changed the implementation to collect warning strings and return them as a list, then display them in the UI with `st.error()`. I verified the choice by writing two tests: one confirming warnings are returned and another confirming no exception is raised even when conflicts exist.
+There were cases where AI suggestions had to be adjusted. For example, in the conflict detection feature, AI suggested raising an error when a conflict occurs. I decided not to use that approach because the application should warn the user instead of stopping completely.
+
+I changed the implementation so it returns warning messages that can be shown in the interface. This allows the user to fix the issue without the program crashing.
+
+To verify this, I wrote tests to make sure warnings were returned and that no errors were raised when conflicts exist.
 
 ---
 
@@ -116,11 +129,19 @@ When generating the conflict-detection method, AI initially suggested raising a 
 
 **a. What you tested**
 
-The final suite has 40 tests across eight categories: Task basics (mark_complete, is_schedulable), Pet management (add/remove/get, copy-safety), Owner aggregation, Scheduler plan generation, sorting, filtering, conflict detection, and recurring-task logic. These tests mattered because the scheduler's correctness depends on several interacting behaviors — if `filter_by_priority()` is wrong, `generate_plan()` silently produces a bad plan. Tests at the unit level let each piece be verified independently before the whole system is assembled. The edge cases (empty owner, zero budget, all-completed tasks) were especially important because those are the silent failures: the app would appear to work but produce nothing, and without a test you might not notice.
+The final test suite includes 40 tests across several categories such as task behavior, pet management, owner data, scheduling logic, sorting, filtering, conflict detection, and recurring tasks.
+
+These tests were important because the scheduler depends on multiple parts working together. If one part is incorrect, the final plan could be wrong without obvious errors. Testing each part individually helped ensure everything worked correctly before combining them.
+
+Edge cases were especially important. I tested situations like having no tasks, zero available time, and all tasks already completed. These cases could lead to silent failures where the program runs but produces no useful output.
 
 **b. Confidence**
 
-Confidence level: **4 out of 5**. The core scheduling contract — priority ordering, time budget, completed-task skipping, recurring spawning, and conflict detection — is thoroughly covered. Two gaps remain: (1) the Streamlit UI is not integration-tested (clicking buttons is not automated), and (2) conflict detection checks only exact `start_time` equality, not true time-interval overlap. If I had more time, I would test: scheduling across the midnight boundary (a task due_date yesterday that recurs), a budget exactly equal to one task's duration (boundary check), and the UI form validation paths (invalid HH:MM format entered by a user).
+Confidence level is 4 out of 5. The main functionality such as priority sorting, time limits, skipping completed tasks, recurring tasks, and conflict detection is well tested.
+
+However, there are still some gaps. The Streamlit interface is not tested automatically, and conflict detection only checks exact matching times instead of full overlaps.
+
+If I had more time, I would test cases like tasks crossing midnight, exact time boundary conditions, and user input validation in the interface.
 
 ---
 
@@ -128,12 +149,25 @@ Confidence level: **4 out of 5**. The core scheduling contract — priority orde
 
 **a. What went well**
 
-The part I'm most satisfied with is the separation between the logic layer (`pawpal_system.py`) and the UI (`app.py`). Because the Scheduler, Pet, and Task classes were designed and fully tested independently, connecting them to Streamlit in Phase 3 was mostly mechanical wiring — the logic was already correct and the tests proved it. That clean separation also made it easy to add new algorithmic features (sort, filter, recurrence, conflicts) without touching the UI at all, then surface them in the UI afterwards. Starting from a UML blueprint — even a rough one — made the implementation far more focused than starting from code directly.
+The strongest part of this project was keeping the logic separate from the user interface. All the main classes and scheduling logic were tested before connecting them to Streamlit. This made building the interface much easier because the core functionality was already working.
+
+This separation also made it easy to add new features like sorting, filtering, and conflict detection without changing the UI. Starting with a clear design plan helped keep everything organized.
 
 **b. What you would improve**
 
-The `Scheduler.generate_plan()` method is a simple greedy algorithm: it takes high-priority tasks first until the budget runs out. This can leave a lot of time on the table if a high-priority long task is followed by many small tasks that would all fit. A next iteration would explore a knapsack-style approach — try to maximize the number of high-priority tasks packed into the budget rather than stopping as soon as one doesn't fit. I'd also add a `reset_daily()` method to `Pet` that clears all `completed` flags at the start of a new day, which the current system lacks entirely.
+The current scheduling method is a simple greedy approach that selects tasks by priority until the time runs out. This can be inefficient because a long task might prevent several smaller tasks from being scheduled even if they would fit.
+
+In the future, I would improve this by using a more advanced approach similar to the knapsack problem to better use the available time.
+
+I would also add a method to reset completed tasks at the start of each day since that feature is currently missing.
 
 **c. Key takeaway**
+
+The most important takeaway is that AI is a useful tool but should not make decisions on its own. It can generate code quickly, but it does not understand the goals or requirements of the project.
+
+When I relied too much on AI for decisions, the results did not match what I needed. The best approach was to define clear goals, use AI to assist with implementation, and verify everything with tests.
+
+AI helps with how to build something, but the developer is responsible for deciding what should be built.
+
 
 The most important thing I learned is that AI is a powerful *accelerator* but not a *decision-maker*. It can produce code quickly, but it does not know which design choices fit your specific goals, constraints, or users. The moment I let AI make architectural decisions without questioning them — like the early suggestion to raise exceptions on conflicts — the code stopped matching the actual user experience I was building. The human role is to define what the system should *do*, hold the AI to that spec, and verify its output against tests. AI handles the "how to write it"; the engineer handles the "what it should mean."
