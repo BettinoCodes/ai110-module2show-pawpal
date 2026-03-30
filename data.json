@@ -1,0 +1,14 @@
+{
+  "name": "Jordan",
+  "available_minutes": 90,
+  "preferences": [],
+  "pets": [
+    {
+      "name": "jackson",
+      "species": "dog",
+      "age": 1,
+      "breed": "",
+      "tasks": []
+    }
+  ]
+}
